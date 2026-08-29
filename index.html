@@ -214,8 +214,8 @@
     width:100%; padding:11px 12px; border:1px solid var(--rule); border-radius:9px;
     background:var(--card); font-size:16px; color:var(--ink); font-family:'IBM Plex Sans',sans-serif;
   }
-  .field-row{display:flex; gap:10px;}
-  .field-row .field{flex:1; min-width:0;}
+  .field-row{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px;}
+  .field-row .field{min-width:0;}
   .cat-picker{display:flex; flex-wrap:wrap; gap:7px;}
   .cat-opt{
     padding:7px 12px; border-radius:20px; border:1px solid var(--rule); background:var(--card);
