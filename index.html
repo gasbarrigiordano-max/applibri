@@ -298,10 +298,10 @@
   <button class="fab" id="fab-add" onclick="openBookForm()">+</button>
 
   <div class="tabbar">
-    <button class="tab-btn" id="tab-raccolta" onclick="switchTab('raccolta')">
+    <button class="tab-btn active" id="tab-raccolta" onclick="switchTab('raccolta')">
       <span class="ic">▥</span><span class="lb">Libreria</span>
     </button>
-    <button class="tab-btn active" id="tab-categorie" onclick="switchTab('categorie')">
+    <button class="tab-btn" id="tab-categorie" onclick="switchTab('categorie')">
       <span class="ic">▤</span><span class="lb">Categorie</span>
     </button>
   </div>
@@ -440,7 +440,7 @@ function showAuthScreen(show){
 /* ---------------- State ---------------- */
 let books = [];
 let categories = [];
-let currentTab = 'categorie';
+let currentTab = 'raccolta';
 let currentCategoryView = null; // null = grid, string = detail
 let editingBookId = null;
 let pickedCategory = null;
@@ -705,7 +705,7 @@ async function boot(){
     document.getElementById('loading').style.display = 'none';
     showAuthScreen(false);
     await loadAll();
-    switchTab('categorie');
+    switchTab('raccolta');
     return;
   }
   const ok = initFirebase();
@@ -716,7 +716,7 @@ async function boot(){
       firebaseUser = user;
       showAuthScreen(false);
       await loadAll();
-      switchTab('categorie');
+      switchTab('raccolta');
     } else {
       firebaseUser = null;
       showAuthScreen(true);
