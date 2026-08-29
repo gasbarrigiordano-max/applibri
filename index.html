@@ -214,10 +214,19 @@
     width:100%; padding:11px 12px; border:1px solid var(--rule); border-radius:9px;
     background:var(--card); font-size:16px; color:var(--ink); font-family:'IBM Plex Sans',sans-serif;
   }
-  /* Fields stack full-width, one per line: native date controls on iOS
-     WebKit don't reliably respect a shrunk grid/flex track width, so
-     pairing them side by side risked overflow no matter the layout
-     method. Stacking removes any competition for horizontal space. */
+  .field-row{display:flex; gap:8px;}
+  .field-row .field{flex:1; min-width:0;}
+  .field-row .field input{padding:11px 8px;}
+  /* Native date pickers on iOS WebKit render at a fixed intrinsic width
+     that ignores the input's own CSS width, so two side by side can
+     overflow their row regardless of layout method. Shrinking the font
+     shrinks that native control too; date inputs don't trigger iOS's
+     zoom-on-focus (that only applies to text-entry keyboards). */
+  .field-row .field input[type="date"]{font-size:13.5px;}
+  @media (max-width:370px){
+    .field-row{gap:6px;}
+    .field-row .field input[type="date"]{font-size:12.5px; padding:11px 6px;}
+  }
   .cat-picker{display:flex; flex-wrap:wrap; gap:7px;}
   .cat-opt{
     padding:7px 12px; border-radius:20px; border:1px solid var(--rule); background:var(--card);
