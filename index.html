@@ -376,24 +376,26 @@ function initFirebase(){
   }catch(e){ console.error('Firebase init error', e); return false; }
 }
 
+const STORAGE_PREFIX = 'libri:';
+
 async function storageGet(key){
   if (USING_CLAUDE_STORAGE) return await window.storage.get(key, false);
   if (firebaseUser){
-    const doc = await firebaseDb.collection('users').doc(firebaseUser.uid).collection('data').doc(key).get();
+    const doc = await firebaseDb.collection('users').doc(firebaseUser.uid).collection('data').doc(STORAGE_PREFIX+key).get();
     if (!doc.exists) throw new Error('not found');
     return { key, value: doc.data().value, shared:false };
   }
-  const raw = localStorage.getItem('libri:'+key);
+  const raw = localStorage.getItem(STORAGE_PREFIX+key);
   if (raw === null) throw new Error('not found');
   return { key, value: raw, shared:false };
 }
 async function storageSet(key, value){
   if (USING_CLAUDE_STORAGE) return await window.storage.set(key, value, false);
   if (firebaseUser){
-    await firebaseDb.collection('users').doc(firebaseUser.uid).collection('data').doc(key).set({ value });
+    await firebaseDb.collection('users').doc(firebaseUser.uid).collection('data').doc(STORAGE_PREFIX+key).set({ value });
     return { key, value, shared:false };
   }
-  localStorage.setItem('libri:'+key, value);
+  localStorage.setItem(STORAGE_PREFIX+key, value);
   return { key, value, shared:false };
 }
 
