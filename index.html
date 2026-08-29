@@ -216,17 +216,6 @@
   }
   .field-row{display:flex; gap:8px;}
   .field-row .field{flex:1; min-width:0;}
-  .field-row .field input{padding:11px 8px;}
-  /* Native date pickers on iOS WebKit render at a fixed intrinsic width
-     that ignores the input's own CSS width, so two side by side can
-     overflow their row regardless of layout method. Shrinking the font
-     shrinks that native control too; date inputs don't trigger iOS's
-     zoom-on-focus (that only applies to text-entry keyboards). */
-  .field-row .field input[type="date"]{font-size:13.5px;}
-  @media (max-width:370px){
-    .field-row{gap:6px;}
-    .field-row .field input[type="date"]{font-size:12.5px; padding:11px 6px;}
-  }
   .cat-picker{display:flex; flex-wrap:wrap; gap:7px;}
   .cat-opt{
     padding:7px 12px; border-radius:20px; border:1px solid var(--rule); background:var(--card);
@@ -333,12 +322,12 @@
     <div class="field"><label>Autore</label><input id="f-autore" placeholder="Nome dell'autore"></div>
     <div class="field"><label>Casa editrice</label><input id="f-editrice" placeholder="Casa editrice"></div>
     <div class="field-row">
-      <div class="field"><label>Data acquisto</label><input type="date" id="f-data-acquisto"></div>
+      <div class="field"><label>Data acquisto</label><input type="text" inputmode="numeric" maxlength="10" placeholder="gg/mm/aaaa" id="f-data-acquisto"></div>
       <div class="field"><label>Prezzo (€)</label><input type="number" step="0.01" id="f-prezzo" placeholder="0,00"></div>
     </div>
     <div class="field-row">
-      <div class="field"><label>Inizio lettura</label><input type="date" id="f-inizio"></div>
-      <div class="field"><label>Fine lettura</label><input type="date" id="f-fine"></div>
+      <div class="field"><label>Inizio lettura</label><input type="text" inputmode="numeric" maxlength="10" placeholder="gg/mm/aaaa" id="f-inizio"></div>
+      <div class="field"><label>Fine lettura</label><input type="text" inputmode="numeric" maxlength="10" placeholder="gg/mm/aaaa" id="f-fine"></div>
     </div>
     <div class="field"><label>Ubicazione</label><input id="f-ubicazione" placeholder="Es. Salotto — libreria bassa"></div>
     <div class="field">
@@ -495,6 +484,35 @@ function fmtDate(iso){
   if (!iso) return null;
   const d = new Date(iso+'T00:00:00');
   return d.toLocaleDateString('it-IT', {day:'2-digit', month:'short', year:'numeric'});
+}
+
+/* ---------------- Date input mask (gg/mm/aaaa <-> ISO) ---------------- */
+function attachDateMask(id){
+  document.getElementById(id).addEventListener('input', (e)=>{
+    const digits = e.target.value.replace(/\D/g,'').slice(0,8);
+    let out = digits;
+    if (digits.length > 4) out = digits.slice(0,2)+'/'+digits.slice(2,4)+'/'+digits.slice(4);
+    else if (digits.length > 2) out = digits.slice(0,2)+'/'+digits.slice(2);
+    e.target.value = out;
+  });
+}
+// Returns ISO 'YYYY-MM-DD' for a valid gg/mm/aaaa string, null for an
+// empty field, or 'invalid' for anything else (blocks save in saveBook).
+function parseItDate(str){
+  str = (str||'').trim();
+  if (!str) return null;
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return 'invalid';
+  const day = +m[1], month = +m[2], year = +m[3];
+  const d = new Date(year, month-1, day);
+  if (d.getFullYear()!==year || d.getMonth()!==month-1 || d.getDate()!==day) return 'invalid';
+  const pad = n => String(n).padStart(2,'0');
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+function formatItDate(iso){
+  if (!iso) return '';
+  const [y,m,d] = iso.split('-');
+  return `${d}/${m}/${y}`;
 }
 function fmtPrice(v){
   if (v === undefined || v === null || v === '') return null;
@@ -662,10 +680,10 @@ function openBookForm(id){
   document.getElementById('f-titolo').value = book?.titolo || '';
   document.getElementById('f-autore').value = book?.autore || '';
   document.getElementById('f-editrice').value = book?.casaEditrice || '';
-  document.getElementById('f-data-acquisto').value = book?.dataAcquisto || '';
+  document.getElementById('f-data-acquisto').value = formatItDate(book?.dataAcquisto);
   document.getElementById('f-prezzo').value = book?.prezzoAcquisto ?? '';
-  document.getElementById('f-inizio').value = book?.dataInizioLettura || '';
-  document.getElementById('f-fine').value = book?.dataFineLettura || '';
+  document.getElementById('f-inizio').value = formatItDate(book?.dataInizioLettura);
+  document.getElementById('f-fine').value = formatItDate(book?.dataFineLettura);
   document.getElementById('f-ubicazione').value = book?.ubicazione || '';
   pickedCategory = book?.categoria || null;
   renderCatPicker();
@@ -678,14 +696,21 @@ function closeBookForm(){
 async function saveBook(){
   const titolo = document.getElementById('f-titolo').value.trim();
   if (!titolo){ showToast('Inserisci almeno il titolo'); return; }
+  const dataAcquisto = parseItDate(document.getElementById('f-data-acquisto').value);
+  const dataInizioLettura = parseItDate(document.getElementById('f-inizio').value);
+  const dataFineLettura = parseItDate(document.getElementById('f-fine').value);
+  if (dataAcquisto==='invalid' || dataInizioLettura==='invalid' || dataFineLettura==='invalid'){
+    showToast('Controlla le date inserite (gg/mm/aaaa)');
+    return;
+  }
   const data = {
     titolo,
     autore: document.getElementById('f-autore').value.trim(),
     casaEditrice: document.getElementById('f-editrice').value.trim(),
-    dataAcquisto: document.getElementById('f-data-acquisto').value || null,
+    dataAcquisto,
     prezzoAcquisto: document.getElementById('f-prezzo').value ? Number(document.getElementById('f-prezzo').value) : null,
-    dataInizioLettura: document.getElementById('f-inizio').value || null,
-    dataFineLettura: document.getElementById('f-fine').value || null,
+    dataInizioLettura,
+    dataFineLettura,
     ubicazione: document.getElementById('f-ubicazione').value.trim(),
     categoria: pickedCategory || null,
   };
@@ -712,6 +737,8 @@ async function deleteBook(){
 
 function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function escAttr(s){ return esc(s).replace(/'/g, "\\'"); }
+
+['f-data-acquisto','f-inizio','f-fine'].forEach(attachDateMask);
 
 /* ---------------- Boot ---------------- */
 async function boot(){
