@@ -413,6 +413,7 @@
       <h2 id="book-form-title">Nuovo libro</h2>
       <button class="sheet-close" onclick="closeBookForm()">Chiudi</button>
     </div>
+    <button type="button" class="scan-btn" onclick="openScanModal()">📷 Scansiona codice a barre</button>
     <div class="field"><label>Titolo</label><input id="f-titolo" placeholder="Titolo del libro"></div>
     <div class="field"><label>Autore</label><input id="f-autore" placeholder="Nome dell'autore"></div>
     <div class="field"><label>Casa editrice</label><input id="f-editrice" placeholder="Casa editrice"></div>
@@ -431,6 +432,19 @@
     </div>
     <button class="btn-primary" onclick="saveBook()">Salva libro</button>
     <button class="btn-secondary" id="delete-book-btn" style="display:none; color:#8B2E2E;" onclick="deleteBook()">Elimina libro</button>
+  </div>
+</div>
+
+<!-- Barcode scanner modal -->
+<div class="modal-overlay" id="scan-modal">
+  <div class="modal-sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2>Scansiona codice a barre</h2>
+      <button class="sheet-close" onclick="closeScanModal()">Chiudi</button>
+    </div>
+    <div class="scan-status" id="scan-status">Inquadra il codice a barre sul retro del libro</div>
+    <div id="scan-reader"></div>
   </div>
 </div>
 
@@ -566,6 +580,8 @@ let filtersOpen = false;
 let statsYear = new Date().getFullYear();
 let viewMode = 'list'; // 'list' | 'grid' — per-device preference, not synced data
 try{ viewMode = localStorage.getItem('libri:viewMode') || 'list'; }catch(e){}
+let scanInstance = null;
+let scannedCoverUrl = null; // cover found by the barcode scanner, consumed on next save
 
 function uid(){ return 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
@@ -1046,11 +1062,73 @@ async function fetchAndAttachCover(bookId, titolo, autore){
   if (currentTab === 'raccolta' || currentTab === 'categorie') render();
 }
 
+/* ---------------- Barcode scanner (ISBN) ---------------- */
+async function lookupByIsbn(isbn){
+  try{
+    const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const data = json[`ISBN:${isbn}`];
+    if (!data) return null;
+    return {
+      titolo: data.title || '',
+      autore: data.authors?.[0]?.name || '',
+      casaEditrice: data.publishers?.[0]?.name || '',
+      copertina: data.cover?.medium || data.cover?.large || data.cover?.small || null,
+    };
+  }catch(e){ return null; }
+}
+async function openScanModal(){
+  document.getElementById('scan-status').textContent = 'Inquadra il codice a barre sul retro del libro';
+  document.getElementById('scan-modal').classList.add('open');
+  if (!window.Html5Qrcode){ showToast('Scanner non disponibile'); closeScanModal(); return; }
+  scanInstance = new Html5Qrcode('scan-reader');
+  try{
+    await scanInstance.start(
+      { facingMode: 'environment' },
+      {
+        fps: 10,
+        qrbox: { width: 260, height: 130 },
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+        ],
+      },
+      onBarcodeDetected,
+      ()=>{} // per-frame "nothing decoded yet" — not an error, ignore
+    );
+  }catch(e){
+    showToast('Impossibile accedere alla fotocamera');
+    closeScanModal();
+  }
+}
+async function closeScanModal(){
+  document.getElementById('scan-modal').classList.remove('open');
+  if (scanInstance){
+    try{ await scanInstance.stop(); scanInstance.clear(); }catch(e){}
+    scanInstance = null;
+  }
+}
+async function onBarcodeDetected(decodedText){
+  const isbn = decodedText.replace(/[^0-9Xx]/g, '');
+  document.getElementById('scan-status').textContent = 'Codice trovato, cerco il libro…';
+  await closeScanModal();
+  const info = await lookupByIsbn(isbn);
+  if (!info || !info.titolo){ showToast('Libro non trovato per questo codice'); return; }
+  document.getElementById('f-titolo').value = info.titolo;
+  document.getElementById('f-autore').value = info.autore;
+  document.getElementById('f-editrice').value = info.casaEditrice;
+  scannedCoverUrl = info.copertina || null;
+  showToast('Trovato: ' + info.titolo);
+}
+
 function openBookForm(id, prefill){
   editingBookId = id || null;
   const book = id ? books.find(b=>b.id===id) : null;
   document.getElementById('book-form-title').textContent = book ? 'Modifica libro' : 'Nuovo libro';
   document.getElementById('delete-book-btn').style.display = book ? 'block' : 'none';
+  scannedCoverUrl = null;
   document.getElementById('f-titolo').value = book?.titolo || prefill?.titolo || '';
   document.getElementById('f-autore').value = book?.autore || prefill?.autore || '';
   document.getElementById('f-editrice').value = book?.casaEditrice || '';
@@ -1093,13 +1171,14 @@ async function saveBook(){
   if (editingBookId){
     bookId = editingBookId;
     const idx = books.findIndex(b=>b.id===editingBookId);
-    if (idx>-1){ data.copertina = books[idx].copertina || null; books[idx] = {...books[idx], ...data}; }
+    if (idx>-1){ data.copertina = scannedCoverUrl || books[idx].copertina || null; books[idx] = {...books[idx], ...data}; }
   } else {
     bookId = uid();
-    data.copertina = null;
+    data.copertina = scannedCoverUrl || null;
     books.push({id: bookId, ...data});
   }
   const boughtWishId = convertingWishId;
+  scannedCoverUrl = null;
   closeBookForm();
   render();
   showToast('Libro salvato');
