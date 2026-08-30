@@ -914,7 +914,25 @@ async function fetchCoverItunes(title, author){
   }catch(e){ return null; }
 }
 async function findCoverUrl(title, author){
-  return (await fetchCoverOpenLibrary(title, author)) || (await fetchCoverItunes(title, author));
+  // iTunes' CDN has proven far more reliable to hotlink than Open Library's
+  // (Open Library covers were intermittently failing to load), so it goes
+  // first; Open Library is still tried as a fallback for wider coverage.
+  return (await fetchCoverItunes(title, author)) || (await fetchCoverOpenLibrary(title, author));
+}
+// One-time-per-load background sweep: any book still carrying an Open
+// Library cover URL gets a chance to be upgraded to the more reliable
+// iTunes source, with no action needed from the user.
+async function upgradeOpenLibraryCovers(){
+  const targets = books.filter(b => b.copertina && b.copertina.includes('covers.openlibrary.org'));
+  let changed = false;
+  for (const b of targets){
+    const url = await fetchCoverItunes(b.titolo, b.autore);
+    if (url){ b.copertina = url; changed = true; }
+  }
+  if (changed){
+    await persistBooks();
+    if (currentTab === 'raccolta' || currentTab === 'categorie') render();
+  }
 }
 async function fetchAndAttachCover(bookId, titolo, autore){
   const url = await findCoverUrl(titolo, autore);
@@ -1057,6 +1075,7 @@ async function boot(){
     showAuthScreen(false);
     await loadAll();
     switchTab('raccolta');
+    upgradeOpenLibraryCovers();
     return;
   }
   const ok = initFirebase();
@@ -1068,6 +1087,7 @@ async function boot(){
       showAuthScreen(false);
       await loadAll();
       switchTab('raccolta');
+      upgradeOpenLibraryCovers();
     } else {
       firebaseUser = null;
       showAuthScreen(true);
