@@ -13,6 +13,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
   :root{
     --paper:#F1EADD;
@@ -293,6 +294,13 @@
   }
   .field-row{display:flex; gap:8px;}
   .field-row .field{flex:1; min-width:0;}
+  .scan-btn{
+    width:100%; padding:12px; border:1.4px dashed var(--brass); border-radius:11px; background:var(--brass-soft);
+    color:var(--brass); font-size:14.5px; font-weight:600; margin-bottom:14px; font-family:'IBM Plex Sans',sans-serif;
+  }
+  .scan-btn:active{opacity:.8;}
+  #scan-reader{width:100%; border-radius:12px; overflow:hidden; background:#000; margin-bottom:10px;}
+  .scan-status{font-size:13px; color:var(--ink-soft); text-align:center; margin-bottom:6px;}
   .cat-picker{display:flex; flex-wrap:wrap; gap:7px;}
   .cat-opt{
     padding:7px 12px; border-radius:20px; border:1px solid var(--rule); background:var(--card);
@@ -548,7 +556,8 @@ let categories = [];
 let wishlist = [];
 let currentTab = 'raccolta';
 let currentCategoryView = null; // null = grid, string = detail
-let currentAuthorView = null; // null = index, string = detail
+let currentAuthorLetter = null; // null = letter grid, string = authors for that letter
+let currentAuthorView = null; // null = (grid or letter list), string = one author's books
 let editingBookId = null;
 let editingWishId = null;
 let convertingWishId = null; // wishlist item being turned into a book via the book form
@@ -637,6 +646,7 @@ function fmtPrice(v){
 function switchTab(tab){
   currentTab = tab;
   currentCategoryView = null;
+  currentAuthorLetter = null;
   currentAuthorView = null;
   document.getElementById('tab-categorie').classList.toggle('active', tab==='categorie');
   document.getElementById('tab-raccolta').classList.toggle('active', tab==='raccolta');
@@ -736,44 +746,68 @@ function uniqueAuthors(){
   books.forEach(b=>{ if (b.autore && b.autore.trim()) set.add(b.autore.trim()); });
   return Array.from(set).sort((a,b)=>a.localeCompare(b));
 }
+function openAuthorLetter(letter){ currentAuthorLetter = letter; render(); }
 function openAuthorDetail(name){ currentAuthorView = name; render(); }
 function renderAutori(){
   document.getElementById('view-count').textContent = '';
   const content = document.getElementById('content');
 
-  if (currentAuthorView === null){
-    document.getElementById('view-title').textContent = 'Autori';
-    const authors = uniqueAuthors();
-    if (authors.length === 0){
-      content.innerHTML = `<div class="empty-state">
-        <div class="glyph">✎</div>
-        <div class="t1">Nessun autore ancora</div>
-        <div class="t2">Gli autori dei libri in libreria<br>compariranno qui, in ordine alfabetico.</div>
-      </div>`;
-      return;
-    }
-    const groups = groupByLetter(authors, a=>a);
-    content.innerHTML = groups.map(g=>{
-      const rows = g.items.map(name=>{
-        const n = books.filter(b=>(b.autore||'').trim()===name).length;
-        return `<div class="author-row" onclick="openAuthorDetail('${escAttr(name)}')">
-          <span class="author-name">${esc(name)}</span>
-          <span class="author-count">${n} ${n===1?'libro':'libri'}</span>
-        </div>`;
-      }).join('');
-      return `<div class="letter-divider">${esc(g.letter)}</div>${rows}`;
-    }).join('');
-  } else {
+  // Level 3: one author's books
+  if (currentAuthorView !== null){
     const author = currentAuthorView;
     document.getElementById('view-title').textContent = '';
-    const list = books.filter(b=>(b.autore||'').trim()===author);
     let html = `<div class="cat-detail-header">
         <button class="back-btn" onclick="currentAuthorView=null; render();">←</button>
         <h2>${esc(author)}</h2>
       </div>`;
-    list.forEach(b => html += bookCardHtml(b));
+    books.filter(b=>(b.autore||'').trim()===author).forEach(b => html += bookCardHtml(b));
     content.innerHTML = html;
+    return;
   }
+
+  // Level 2: authors starting with the chosen letter
+  if (currentAuthorLetter !== null){
+    const letter = currentAuthorLetter;
+    document.getElementById('view-title').textContent = '';
+    const authors = uniqueAuthors().filter(a => (a.charAt(0).toUpperCase() || '#') === letter);
+    let html = `<div class="cat-detail-header">
+        <button class="back-btn" onclick="currentAuthorLetter=null; render();">←</button>
+        <h2>${esc(letter)}</h2>
+      </div>`;
+    html += authors.map(name=>{
+      const n = books.filter(b=>(b.autore||'').trim()===name).length;
+      return `<div class="author-row" onclick="openAuthorDetail('${escAttr(name)}')">
+        <span class="author-name">${esc(name)}</span>
+        <span class="author-count">${n} ${n===1?'libro':'libri'}</span>
+      </div>`;
+    }).join('');
+    content.innerHTML = html;
+    return;
+  }
+
+  // Level 1: one tile per letter that has at least one author
+  document.getElementById('view-title').textContent = 'Autori';
+  const authors = uniqueAuthors();
+  if (authors.length === 0){
+    content.innerHTML = `<div class="empty-state">
+      <div class="glyph">✎</div>
+      <div class="t1">Nessun autore ancora</div>
+      <div class="t2">Gli autori dei libri in libreria<br>compariranno qui, in ordine alfabetico.</div>
+    </div>`;
+    return;
+  }
+  const groups = groupByLetter(authors, a=>a);
+  let html = '<div class="cat-grid">';
+  groups.forEach(g=>{
+    const n = g.items.length;
+    html += `<div class="cat-tile" onclick="openAuthorLetter('${escAttr(g.letter)}')">
+      <div class="ribbon"></div>
+      <h3>${esc(g.letter)}</h3>
+      <div class="n">${n} ${n===1?'autore':'autori'}</div>
+    </div>`;
+  });
+  html += '</div>';
+  content.innerHTML = html;
 }
 function renderRaccolta(){
   document.getElementById('view-title').textContent = 'Libreria';
