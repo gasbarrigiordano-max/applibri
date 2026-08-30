@@ -148,13 +148,26 @@
   }
   .wish-buy:active{opacity:.8;}
 
-  /* ---------- letter dividers (Libreria) ---------- */
+  /* ---------- letter dividers (Libreria, Autori) ---------- */
   .letter-divider{
     font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; text-transform:uppercase;
     letter-spacing:.08em; color:var(--ink-soft); padding:9px 2px 6px; border-bottom:1px solid var(--rule);
     margin-bottom:8px;
   }
   .letter-divider:not(:first-child){margin-top:6px;}
+
+  /* ---------- authors index ---------- */
+  .author-row{
+    display:flex; justify-content:space-between; align-items:center; gap:10px;
+    background:var(--card); border:1px solid var(--rule); border-radius:10px;
+    padding:12px 14px; margin-bottom:8px; box-shadow:var(--shadow);
+  }
+  .author-row:active{transform:scale(0.99);}
+  .author-name{font-family:'Spectral',serif; font-weight:600; font-size:15px; color:var(--ink);}
+  .author-count{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-soft);
+    text-transform:uppercase; letter-spacing:.05em; white-space:nowrap; flex-shrink:0;
+  }
 
   /* ---------- book grid view ---------- */
   .book-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px 11px;}
@@ -244,11 +257,11 @@
     padding-bottom: var(--safe-bottom);
   }
   .tab-btn{
-    flex:1; border:none; background:none; padding:9px 0 8px; display:flex; flex-direction:column;
-    align-items:center; gap:3px; color:var(--ink-soft); font-family:'IBM Plex Sans',sans-serif;
+    flex:1; min-width:0; border:none; background:none; padding:8px 2px 7px; display:flex; flex-direction:column;
+    align-items:center; gap:2px; color:var(--ink-soft); font-family:'IBM Plex Sans',sans-serif;
   }
-  .tab-btn .ic{font-size:21px; line-height:1;}
-  .tab-btn .lb{font-size:10.5px; font-weight:600; letter-spacing:.03em;}
+  .tab-btn .ic{font-size:19px; line-height:1;}
+  .tab-btn .lb{font-size:9.5px; font-weight:600; letter-spacing:.01em; text-align:center; line-height:1.15;}
   .tab-btn.active{color:var(--stamp);}
 
   /* ---------- modals ---------- */
@@ -367,11 +380,14 @@
     <button class="tab-btn active" id="tab-raccolta" onclick="switchTab('raccolta')">
       <span class="ic">▥</span><span class="lb">Libreria</span>
     </button>
+    <button class="tab-btn" id="tab-autori" onclick="switchTab('autori')">
+      <span class="ic">✎</span><span class="lb">Autori</span>
+    </button>
     <button class="tab-btn" id="tab-categorie" onclick="switchTab('categorie')">
       <span class="ic">▤</span><span class="lb">Categorie</span>
     </button>
     <button class="tab-btn" id="tab-desideri" onclick="switchTab('desideri')">
-      <span class="ic">☆</span><span class="lb">Desideri</span>
+      <span class="ic">☆</span><span class="lb">Da acquistare</span>
     </button>
     <button class="tab-btn" id="tab-statistiche" onclick="switchTab('statistiche')">
       <span class="ic">Σ</span><span class="lb">Statistiche</span>
@@ -415,13 +431,13 @@
   <div class="modal-sheet">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
-      <h2 id="wish-form-title">Nuovo desiderio</h2>
+      <h2 id="wish-form-title">Nuovo libro da acquistare</h2>
       <button class="sheet-close" onclick="closeWishForm()">Chiudi</button>
     </div>
     <div class="field"><label>Titolo</label><input id="fw-titolo" placeholder="Titolo del libro"></div>
     <div class="field"><label>Autore</label><input id="fw-autore" placeholder="Nome dell'autore"></div>
     <button class="btn-primary" onclick="saveWish()">Salva</button>
-    <button class="btn-secondary" id="delete-wish-btn" style="display:none; color:#8B2E2E;" onclick="deleteWish()">Rimuovi dai desideri</button>
+    <button class="btn-secondary" id="delete-wish-btn" style="display:none; color:#8B2E2E;" onclick="deleteWish()">Rimuovi dalla lista</button>
   </div>
 </div>
 
@@ -532,6 +548,7 @@ let categories = [];
 let wishlist = [];
 let currentTab = 'raccolta';
 let currentCategoryView = null; // null = grid, string = detail
+let currentAuthorView = null; // null = index, string = detail
 let editingBookId = null;
 let editingWishId = null;
 let convertingWishId = null; // wishlist item being turned into a book via the book form
@@ -620,8 +637,10 @@ function fmtPrice(v){
 function switchTab(tab){
   currentTab = tab;
   currentCategoryView = null;
+  currentAuthorView = null;
   document.getElementById('tab-categorie').classList.toggle('active', tab==='categorie');
   document.getElementById('tab-raccolta').classList.toggle('active', tab==='raccolta');
+  document.getElementById('tab-autori').classList.toggle('active', tab==='autori');
   document.getElementById('tab-desideri').classList.toggle('active', tab==='desideri');
   document.getElementById('tab-statistiche').classList.toggle('active', tab==='statistiche');
   document.getElementById('raccolta-controls').style.display = tab==='raccolta' ? 'block' : 'none';
@@ -630,6 +649,7 @@ function switchTab(tab){
 }
 function render(){
   if (currentTab === 'categorie') renderCategorie();
+  else if (currentTab === 'autori') renderAutori();
   else if (currentTab === 'desideri') renderDesideri();
   else if (currentTab === 'statistiche') renderStatistiche();
   else renderRaccolta();
@@ -696,16 +716,64 @@ function toggleViewMode(){
   renderRaccolta();
 }
 // Splits an already-alphabetically-sorted list into {letter, items} runs,
-// so consecutive books starting with the same letter share one divider.
-function groupByLetter(list){
+// so consecutive entries starting with the same letter share one divider.
+// keyFn extracts the string to group by (defaults to a book's title).
+function groupByLetter(list, keyFn){
+  const get = keyFn || (b => b.titolo);
   const groups = [];
-  list.forEach(b=>{
-    const letter = (b.titolo||'').trim().charAt(0).toUpperCase() || '#';
+  list.forEach(item=>{
+    const letter = (get(item)||'').trim().charAt(0).toUpperCase() || '#';
     const last = groups[groups.length-1];
-    if (!last || last.letter !== letter) groups.push({letter, items:[b]});
-    else last.items.push(b);
+    if (!last || last.letter !== letter) groups.push({letter, items:[item]});
+    else last.items.push(item);
   });
   return groups;
+}
+
+/* ---------------- Autori tab ---------------- */
+function uniqueAuthors(){
+  const set = new Set();
+  books.forEach(b=>{ if (b.autore && b.autore.trim()) set.add(b.autore.trim()); });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
+function openAuthorDetail(name){ currentAuthorView = name; render(); }
+function renderAutori(){
+  document.getElementById('view-count').textContent = '';
+  const content = document.getElementById('content');
+
+  if (currentAuthorView === null){
+    document.getElementById('view-title').textContent = 'Autori';
+    const authors = uniqueAuthors();
+    if (authors.length === 0){
+      content.innerHTML = `<div class="empty-state">
+        <div class="glyph">✎</div>
+        <div class="t1">Nessun autore ancora</div>
+        <div class="t2">Gli autori dei libri in libreria<br>compariranno qui, in ordine alfabetico.</div>
+      </div>`;
+      return;
+    }
+    const groups = groupByLetter(authors, a=>a);
+    content.innerHTML = groups.map(g=>{
+      const rows = g.items.map(name=>{
+        const n = books.filter(b=>(b.autore||'').trim()===name).length;
+        return `<div class="author-row" onclick="openAuthorDetail('${escAttr(name)}')">
+          <span class="author-name">${esc(name)}</span>
+          <span class="author-count">${n} ${n===1?'libro':'libri'}</span>
+        </div>`;
+      }).join('');
+      return `<div class="letter-divider">${esc(g.letter)}</div>${rows}`;
+    }).join('');
+  } else {
+    const author = currentAuthorView;
+    document.getElementById('view-title').textContent = '';
+    const list = books.filter(b=>(b.autore||'').trim()===author);
+    let html = `<div class="cat-detail-header">
+        <button class="back-btn" onclick="currentAuthorView=null; render();">←</button>
+        <h2>${esc(author)}</h2>
+      </div>`;
+    list.forEach(b => html += bookCardHtml(b));
+    content.innerHTML = html;
+  }
 }
 function renderRaccolta(){
   document.getElementById('view-title').textContent = 'Libreria';
@@ -787,13 +855,13 @@ function openCategoryDetail(cat){ currentCategoryView = cat; render(); }
 
 /* ---------------- Desideri tab ---------------- */
 function renderDesideri(){
-  document.getElementById('view-title').textContent = 'Desideri';
-  document.getElementById('view-count').textContent = wishlist.length + (wishlist.length===1 ? ' desiderio' : ' desideri');
+  document.getElementById('view-title').textContent = 'Da acquistare';
+  document.getElementById('view-count').textContent = wishlist.length + (wishlist.length===1 ? ' libro' : ' libri');
   const content = document.getElementById('content');
   if (wishlist.length === 0){
     content.innerHTML = `<div class="empty-state">
       <div class="glyph">☆</div>
-      <div class="t1">Nessun desiderio ancora</div>
+      <div class="t1">Nessun libro da acquistare ancora</div>
       <div class="t2">Tocca il pulsante + per aggiungere<br>un libro che vuoi comprare.</div>
     </div>`;
     return;
@@ -1022,7 +1090,7 @@ async function deleteBook(){
 function openWishForm(id){
   editingWishId = id || null;
   const item = id ? wishlist.find(w=>w.id===id) : null;
-  document.getElementById('wish-form-title').textContent = item ? 'Modifica desiderio' : 'Nuovo desiderio';
+  document.getElementById('wish-form-title').textContent = item ? 'Modifica libro da acquistare' : 'Nuovo libro da acquistare';
   document.getElementById('delete-wish-btn').style.display = item ? 'block' : 'none';
   document.getElementById('fw-titolo').value = item?.titolo || '';
   document.getElementById('fw-autore').value = item?.autore || '';
@@ -1044,16 +1112,16 @@ async function saveWish(){
   }
   closeWishForm();
   render();
-  showToast('Desiderio salvato');
+  showToast('Aggiunto alla lista');
   await persistWishlist();
 }
 async function deleteWish(){
   if (!editingWishId) return;
-  if (!confirm('Rimuovere questo libro dalla lista desideri?')) return;
+  if (!confirm('Rimuovere questo libro dalla lista?')) return;
   wishlist = wishlist.filter(w=>w.id!==editingWishId);
   closeWishForm();
   render();
-  showToast('Rimosso dai desideri');
+  showToast('Rimosso dalla lista');
   await persistWishlist();
 }
 function markAsBought(id){
