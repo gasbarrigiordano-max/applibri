@@ -1096,11 +1096,50 @@ async function lookupByIsbnSearchApi(isbn){
     };
   }catch(e){ return null; }
 }
-// The "editions" API (bibkeys) needs a fairly complete catalog record to
-// answer, so a second try against the broader search index recovers some
-// ISBNs the first one misses.
+// Converts a 978-prefixed ISBN-13 to its ISBN-10 equivalent (standard
+// checksum algorithm). Older editions are sometimes only catalogued under
+// the 10-digit ISBN even though the barcode encodes the 13-digit one.
+function isbn13to10(isbn13){
+  if (!/^978\d{10}$/.test(isbn13)) return null;
+  const core = isbn13.slice(3, 12);
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += (10 - i) * Number(core[i]);
+  const check = (11 - (sum % 11)) % 11;
+  return core + (check === 10 ? 'X' : String(check));
+}
+async function lookupByIsbnArchiveOrg(isbn){
+  try{
+    const params = new URLSearchParams();
+    params.append('q', `isbn:${isbn}`);
+    params.append('fl[]', 'title');
+    params.append('fl[]', 'creator');
+    params.append('output', 'json');
+    params.append('rows', '1');
+    const res = await fetch(`https://archive.org/advancedsearch.php?${params.toString()}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const doc = json.response?.docs?.[0];
+    if (!doc || !doc.title) return null;
+    const creator = Array.isArray(doc.creator) ? doc.creator[0] : doc.creator;
+    return { titolo: doc.title, autore: creator || '', casaEditrice: '', copertina: null };
+  }catch(e){ return null; }
+}
+// Tries, in order: Open Library by the scanned ISBN (two endpoints), then
+// the same two endpoints again with the ISBN-10 equivalent if there is
+// one, then Internet Archive's separate catalog as a last resort — each
+// step is an independent database/index, so a miss on one doesn't mean
+// the book truly isn't findable.
 async function lookupByIsbn(isbn){
-  return (await lookupByIsbnEditionsApi(isbn)) || (await lookupByIsbnSearchApi(isbn));
+  let info = (await lookupByIsbnEditionsApi(isbn)) || (await lookupByIsbnSearchApi(isbn));
+  if (info) return info;
+
+  const isbn10 = isbn13to10(isbn);
+  if (isbn10){
+    info = (await lookupByIsbnEditionsApi(isbn10)) || (await lookupByIsbnSearchApi(isbn10));
+    if (info) return info;
+  }
+
+  return await lookupByIsbnArchiveOrg(isbn);
 }
 async function openScanModal(){
   document.getElementById('scan-status').textContent = 'Inquadra il codice a barre sul retro del libro';
