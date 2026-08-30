@@ -109,6 +109,11 @@
     width:5px; border-radius:3px; flex-shrink:0;
     background:linear-gradient(var(--green), var(--brass));
   }
+  .book-cover{
+    width:40px; aspect-ratio:2/3; border-radius:4px; overflow:hidden; flex-shrink:0;
+    background:var(--paper-dim);
+  }
+  .book-cover img{width:100%; height:100%; object-fit:cover; display:block;}
   .book-main{flex:1; min-width:0;}
   .book-top{display:flex; justify-content:space-between; gap:8px; align-items:flex-start;}
   .book-title{
@@ -142,6 +147,44 @@
     white-space:nowrap; transform:rotate(-2deg);
   }
   .wish-buy:active{opacity:.8;}
+
+  /* ---------- letter dividers (Libreria) ---------- */
+  .letter-divider{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:600; text-transform:uppercase;
+    letter-spacing:.08em; color:var(--ink-soft); padding:9px 2px 6px; border-bottom:1px solid var(--rule);
+    margin-bottom:8px;
+  }
+  .letter-divider:not(:first-child){margin-top:6px;}
+
+  /* ---------- book grid view ---------- */
+  .book-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px 11px;}
+  .book-grid-card{
+    background:var(--card); border:1px solid var(--rule); border-radius:12px; padding:10px;
+    box-shadow:var(--shadow); display:flex; flex-direction:column;
+  }
+  .book-grid-card:active{transform:scale(0.98);}
+  .grid-cover{
+    width:100%; aspect-ratio:2/3; border-radius:8px; overflow:hidden; background:var(--paper-dim);
+    display:flex; align-items:center; justify-content:center; margin-bottom:8px;
+  }
+  .grid-cover img{width:100%; height:100%; object-fit:cover; display:block;}
+  .grid-cover-fallback{font-size:28px; opacity:.5;}
+  .grid-title{
+    font-family:'Spectral',serif; font-weight:600; font-size:14px; line-height:1.25; margin:0 0 2px;
+  }
+  .grid-author{font-size:11.5px; color:var(--ink-soft); margin:0;}
+  .book-grid-card .stamp-badge{margin-top:6px; align-self:flex-start;}
+
+  /* ---------- cover picker (book form) ---------- */
+  .cover-picker{display:flex; gap:12px; align-items:flex-start;}
+  .cover-preview{
+    width:64px; aspect-ratio:2/3; border-radius:6px; overflow:hidden; background:var(--paper-dim);
+    border:1px solid var(--rule); display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .cover-preview img{width:100%; height:100%; object-fit:cover; display:block;}
+  .cover-preview-empty{font-size:24px; opacity:.5;}
+  .cover-actions{display:flex; flex-direction:column; gap:6px; flex:1;}
+  .cover-actions .btn-secondary{width:100%; padding:10px; font-size:13px; margin-top:0;}
 
   /* ---------- statistics ---------- */
   .stats-filter{display:flex; align-items:center; gap:10px; margin-bottom:16px;}
@@ -317,6 +360,7 @@
     <div id="raccolta-controls" style="display:none;">
       <div class="search-wrap">
         <input class="search-input" id="search-input" placeholder="Cerca titolo o autore…" oninput="renderRaccolta()">
+        <div class="filter-toggle" id="view-toggle-btn" onclick="toggleViewMode()">⊞</div>
         <div class="filter-toggle" id="filter-toggle-btn" onclick="toggleFilters()">⇅</div>
       </div>
       <div class="filter-row" id="filter-row" style="display:none;">
@@ -358,6 +402,16 @@
     </div>
     <div class="field"><label>Titolo</label><input id="f-titolo" placeholder="Titolo del libro"></div>
     <div class="field"><label>Autore</label><input id="f-autore" placeholder="Nome dell'autore"></div>
+    <div class="field">
+      <label>Copertina</label>
+      <div class="cover-picker">
+        <div class="cover-preview" id="f-cover-preview"><span class="cover-preview-empty">📕</span></div>
+        <div class="cover-actions">
+          <button type="button" class="btn-secondary" style="margin-top:0;" id="cover-search-btn" onclick="searchCoverForForm()">Cerca copertina online</button>
+          <button type="button" class="btn-secondary" style="display:none;" id="cover-remove-btn" onclick="removeCoverFromForm()">Rimuovi copertina</button>
+        </div>
+      </div>
+    </div>
     <div class="field"><label>Casa editrice</label><input id="f-editrice" placeholder="Casa editrice"></div>
     <div class="field-row">
       <div class="field"><label>Data acquisto</label><input type="text" inputmode="numeric" maxlength="10" placeholder="gg/mm/aaaa" id="f-data-acquisto"></div>
@@ -505,6 +559,10 @@ let convertingWishId = null; // wishlist item being turned into a book via the b
 let pickedCategory = null;
 let filtersOpen = false;
 let statsYear = new Date().getFullYear();
+let viewMode = 'list'; // 'list' | 'grid' — per-device preference, not synced data
+try{ viewMode = localStorage.getItem('libri:viewMode') || 'list'; }catch(e){}
+let formCoverUrl = null;
+let coverSearchToken = 0;
 
 function uid(){ return 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
@@ -655,8 +713,26 @@ function toggleFilters(){
   document.getElementById('filter-row').style.display = filtersOpen ? 'flex' : 'none';
   document.getElementById('filter-toggle-btn').classList.toggle('active', filtersOpen);
 }
+function toggleViewMode(){
+  viewMode = viewMode === 'grid' ? 'list' : 'grid';
+  try{ localStorage.setItem('libri:viewMode', viewMode); }catch(e){}
+  renderRaccolta();
+}
+// Splits an already-alphabetically-sorted list into {letter, items} runs,
+// so consecutive books starting with the same letter share one divider.
+function groupByLetter(list){
+  const groups = [];
+  list.forEach(b=>{
+    const letter = (b.titolo||'').trim().charAt(0).toUpperCase() || '#';
+    const last = groups[groups.length-1];
+    if (!last || last.letter !== letter) groups.push({letter, items:[b]});
+    else last.items.push(b);
+  });
+  return groups;
+}
 function renderRaccolta(){
   document.getElementById('view-title').textContent = 'Libreria';
+  document.getElementById('view-toggle-btn').classList.toggle('active', viewMode==='grid');
   const content = document.getElementById('content');
   const q = (document.getElementById('search-input').value || '').trim().toLowerCase();
   const fa = (document.getElementById('filter-autore').value || '').trim().toLowerCase();
@@ -683,7 +759,26 @@ function renderRaccolta(){
     content.innerHTML = `<div class="empty-state"><div class="glyph">🔎</div><div class="t1">Nessun risultato</div><div class="t2">Nessun libro corrisponde alla ricerca.</div></div>`;
     return;
   }
-  content.innerHTML = list.map(bookCardHtml).join('');
+  const groups = groupByLetter(list);
+  if (viewMode === 'grid'){
+    content.innerHTML = '<div class="book-grid">' + groups.map(g =>
+      `<div class="letter-divider" style="grid-column:1/-1;">${esc(g.letter)}</div>` + g.items.map(bookGridCardHtml).join('')
+    ).join('') + '</div>';
+  } else {
+    content.innerHTML = groups.map(g =>
+      `<div class="letter-divider">${esc(g.letter)}</div>` + g.items.map(bookCardHtml).join('')
+    ).join('');
+  }
+}
+
+function bookGridCardHtml(b){
+  const st = readingStatus(b);
+  return `<div class="book-grid-card" onclick="openBookForm('${b.id}')">
+    <div class="grid-cover">${b.copertina ? `<img src="${escAttr(b.copertina)}" alt="">` : `<span class="grid-cover-fallback">📕</span>`}</div>
+    <p class="grid-title">${esc(b.titolo || 'Senza titolo')}</p>
+    <p class="grid-author">${esc(b.autore || 'Autore sconosciuto')}</p>
+    <span class="stamp-badge st-${st.key}">${st.label}</span>
+  </div>`;
 }
 
 function bookCardHtml(b){
@@ -693,8 +788,9 @@ function bookCardHtml(b){
   if (b.dataAcquisto) meta.push(`<span>Acquistato ${fmtDate(b.dataAcquisto)}</span>`);
   const price = fmtPrice(b.prezzoAcquisto);
   if (price) meta.push(`<span>${price}</span>`);
+  const cover = b.copertina ? `<div class="book-cover"><img src="${escAttr(b.copertina)}" alt=""></div>` : `<div class="spine"></div>`;
   return `<div class="book-card" onclick="openBookForm('${b.id}')">
-    <div class="spine"></div>
+    ${cover}
     <div class="book-main">
       <div class="book-top">
         <div>
@@ -815,6 +911,56 @@ function renderCatPicker(){
 }
 function pickCategory(c){ pickedCategory = (pickedCategory === c) ? null : c; renderCatPicker(); }
 
+/* ---------------- Cover search (Google Books) ---------------- */
+function setCoverPreview(url){
+  formCoverUrl = url || null;
+  document.getElementById('f-cover-preview').innerHTML = formCoverUrl
+    ? `<img src="${escAttr(formCoverUrl)}" alt="">`
+    : `<span class="cover-preview-empty">📕</span>`;
+  document.getElementById('cover-remove-btn').style.display = formCoverUrl ? 'block' : 'none';
+}
+function removeCoverFromForm(){ setCoverPreview(null); }
+async function fetchCoverUrl(title, author){
+  const q = encodeURIComponent(`intitle:${title}` + (author ? ` inauthor:${author}` : ''));
+  const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1`);
+  if (!res.ok) return null;
+  const json = await res.json();
+  const links = json.items?.[0]?.volumeInfo?.imageLinks;
+  const thumb = links?.thumbnail || links?.smallThumbnail;
+  return thumb ? thumb.replace(/^http:/, 'https:') : null;
+}
+async function searchCoverForForm(){
+  const titolo = document.getElementById('f-titolo').value.trim();
+  if (!titolo){ showToast('Inserisci prima il titolo'); return; }
+  const autore = document.getElementById('f-autore').value.trim();
+  const btn = document.getElementById('cover-search-btn');
+  const myToken = ++coverSearchToken;
+  btn.textContent = 'Cerco…';
+  btn.disabled = true;
+  try{
+    const url = await fetchCoverUrl(titolo, autore);
+    if (myToken !== coverSearchToken) return; // a newer search superseded this one
+    if (url) setCoverPreview(url);
+    else showToast('Copertina non trovata');
+  }catch(e){
+    if (myToken === coverSearchToken) showToast('Ricerca copertina non riuscita');
+  }finally{
+    if (myToken === coverSearchToken){ btn.textContent = 'Cerca copertina online'; btn.disabled = false; }
+  }
+}
+// Auto-search once when the user finishes typing title/author, but only if
+// no cover is set yet — so it never overwrites one already found or kept.
+function attachAutoCoverSearch(){
+  ['f-titolo','f-autore'].forEach(id=>{
+    document.getElementById(id).addEventListener('blur', ()=>{
+      if (formCoverUrl) return;
+      if (!document.getElementById('book-modal').classList.contains('open')) return;
+      if (!document.getElementById('f-titolo').value.trim()) return;
+      searchCoverForForm();
+    });
+  });
+}
+
 function openBookForm(id, prefill){
   editingBookId = id || null;
   const book = id ? books.find(b=>b.id===id) : null;
@@ -822,6 +968,7 @@ function openBookForm(id, prefill){
   document.getElementById('delete-book-btn').style.display = book ? 'block' : 'none';
   document.getElementById('f-titolo').value = book?.titolo || prefill?.titolo || '';
   document.getElementById('f-autore').value = book?.autore || prefill?.autore || '';
+  setCoverPreview(book?.copertina || null);
   document.getElementById('f-editrice').value = book?.casaEditrice || '';
   document.getElementById('f-data-acquisto').value = formatItDate(book?.dataAcquisto);
   document.getElementById('f-prezzo').value = book?.prezzoAcquisto ?? '';
@@ -857,6 +1004,7 @@ async function saveBook(){
     dataFineLettura,
     ubicazione: document.getElementById('f-ubicazione').value.trim(),
     categoria: pickedCategory || null,
+    copertina: formCoverUrl,
   };
   if (editingBookId){
     const idx = books.findIndex(b=>b.id===editingBookId);
@@ -933,6 +1081,7 @@ function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;',
 function escAttr(s){ return esc(s).replace(/'/g, "\\'"); }
 
 ['f-data-acquisto','f-inizio','f-fine'].forEach(attachDateMask);
+attachAutoCoverSearch();
 
 /* ---------------- Boot ---------------- */
 async function boot(){
