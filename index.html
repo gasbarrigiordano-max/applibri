@@ -175,17 +175,6 @@
   .grid-author{font-size:11.5px; color:var(--ink-soft); margin:0;}
   .book-grid-card .stamp-badge{margin-top:6px; align-self:flex-start;}
 
-  /* ---------- cover picker (book form) ---------- */
-  .cover-picker{display:flex; gap:12px; align-items:flex-start;}
-  .cover-preview{
-    width:64px; aspect-ratio:2/3; border-radius:6px; overflow:hidden; background:var(--paper-dim);
-    border:1px solid var(--rule); display:flex; align-items:center; justify-content:center; flex-shrink:0;
-  }
-  .cover-preview img{width:100%; height:100%; object-fit:cover; display:block;}
-  .cover-preview-empty{font-size:24px; opacity:.5;}
-  .cover-actions{display:flex; flex-direction:column; gap:6px; flex:1;}
-  .cover-actions .btn-secondary{width:100%; padding:10px; font-size:13px; margin-top:0;}
-
   /* ---------- statistics ---------- */
   .stats-filter{display:flex; align-items:center; gap:10px; margin-bottom:16px;}
   .stats-filter label{
@@ -402,16 +391,6 @@
     </div>
     <div class="field"><label>Titolo</label><input id="f-titolo" placeholder="Titolo del libro"></div>
     <div class="field"><label>Autore</label><input id="f-autore" placeholder="Nome dell'autore"></div>
-    <div class="field">
-      <label>Copertina</label>
-      <div class="cover-picker">
-        <div class="cover-preview" id="f-cover-preview"><span class="cover-preview-empty">📕</span></div>
-        <div class="cover-actions">
-          <button type="button" class="btn-secondary" style="margin-top:0;" id="cover-search-btn" onclick="searchCoverForForm()">Cerca copertina online</button>
-          <button type="button" class="btn-secondary" style="display:none;" id="cover-remove-btn" onclick="removeCoverFromForm()">Rimuovi copertina</button>
-        </div>
-      </div>
-    </div>
     <div class="field"><label>Casa editrice</label><input id="f-editrice" placeholder="Casa editrice"></div>
     <div class="field-row">
       <div class="field"><label>Data acquisto</label><input type="text" inputmode="numeric" maxlength="10" placeholder="gg/mm/aaaa" id="f-data-acquisto"></div>
@@ -561,8 +540,6 @@ let filtersOpen = false;
 let statsYear = new Date().getFullYear();
 let viewMode = 'list'; // 'list' | 'grid' — per-device preference, not synced data
 try{ viewMode = localStorage.getItem('libri:viewMode') || 'list'; }catch(e){}
-let formCoverUrl = null;
-let coverSearchToken = 0;
 
 function uid(){ return 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
@@ -911,54 +888,42 @@ function renderCatPicker(){
 }
 function pickCategory(c){ pickedCategory = (pickedCategory === c) ? null : c; renderCatPicker(); }
 
-/* ---------------- Cover search (Google Books) ---------------- */
-function setCoverPreview(url){
-  formCoverUrl = url || null;
-  document.getElementById('f-cover-preview').innerHTML = formCoverUrl
-    ? `<img src="${escAttr(formCoverUrl)}" alt="">`
-    : `<span class="cover-preview-empty">📕</span>`;
-  document.getElementById('cover-remove-btn').style.display = formCoverUrl ? 'block' : 'none';
-}
-function removeCoverFromForm(){ setCoverPreview(null); }
-async function fetchCoverUrl(title, author){
-  const params = new URLSearchParams({ title, limit: '1', fields: 'cover_i' });
-  if (author) params.set('author', author);
-  const res = await fetch(`https://openlibrary.org/search.json?${params.toString()}`);
-  if (!res.ok) return null;
-  const json = await res.json();
-  const coverId = json.docs?.[0]?.cover_i;
-  return coverId ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg` : null;
-}
-async function searchCoverForForm(){
-  const titolo = document.getElementById('f-titolo').value.trim();
-  if (!titolo){ showToast('Inserisci prima il titolo'); return; }
-  const autore = document.getElementById('f-autore').value.trim();
-  const btn = document.getElementById('cover-search-btn');
-  const myToken = ++coverSearchToken;
-  btn.textContent = 'Cerco…';
-  btn.disabled = true;
+/* ---------------- Automatic cover search ----------------
+   Fully automatic: no UI, no user action. saveBook() calls
+   fetchAndAttachCover() in the background for any book saved without a
+   cover yet, trying each provider in turn until one has an image. */
+async function fetchCoverOpenLibrary(title, author){
   try{
-    const url = await fetchCoverUrl(titolo, autore);
-    if (myToken !== coverSearchToken) return; // a newer search superseded this one
-    if (url) setCoverPreview(url);
-    else showToast('Copertina non trovata');
-  }catch(e){
-    if (myToken === coverSearchToken) showToast('Ricerca copertina non riuscita');
-  }finally{
-    if (myToken === coverSearchToken){ btn.textContent = 'Cerca copertina online'; btn.disabled = false; }
-  }
+    const params = new URLSearchParams({ title, limit: '1', fields: 'cover_i' });
+    if (author) params.set('author', author);
+    const res = await fetch(`https://openlibrary.org/search.json?${params.toString()}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const coverId = json.docs?.[0]?.cover_i;
+    return coverId ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg` : null;
+  }catch(e){ return null; }
 }
-// Auto-search once when the user finishes typing title/author, but only if
-// no cover is set yet — so it never overwrites one already found or kept.
-function attachAutoCoverSearch(){
-  ['f-titolo','f-autore'].forEach(id=>{
-    document.getElementById(id).addEventListener('blur', ()=>{
-      if (formCoverUrl) return;
-      if (!document.getElementById('book-modal').classList.contains('open')) return;
-      if (!document.getElementById('f-titolo').value.trim()) return;
-      searchCoverForForm();
-    });
-  });
+async function fetchCoverItunes(title, author){
+  try{
+    const term = encodeURIComponent(`${title} ${author||''}`.trim());
+    const res = await fetch(`https://itunes.apple.com/search?term=${term}&entity=ebook&limit=1`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const art = json.results?.[0]?.artworkUrl100;
+    return art ? art.replace('100x100bb', '600x600bb') : null;
+  }catch(e){ return null; }
+}
+async function findCoverUrl(title, author){
+  return (await fetchCoverOpenLibrary(title, author)) || (await fetchCoverItunes(title, author));
+}
+async function fetchAndAttachCover(bookId, titolo, autore){
+  const url = await findCoverUrl(titolo, autore);
+  if (!url) return;
+  const idx = books.findIndex(b=>b.id===bookId);
+  if (idx === -1) return; // deleted while the search was in flight
+  books[idx].copertina = url;
+  await persistBooks();
+  if (currentTab === 'raccolta' || currentTab === 'categorie') render();
 }
 
 function openBookForm(id, prefill){
@@ -968,7 +933,6 @@ function openBookForm(id, prefill){
   document.getElementById('delete-book-btn').style.display = book ? 'block' : 'none';
   document.getElementById('f-titolo').value = book?.titolo || prefill?.titolo || '';
   document.getElementById('f-autore').value = book?.autore || prefill?.autore || '';
-  setCoverPreview(book?.copertina || null);
   document.getElementById('f-editrice').value = book?.casaEditrice || '';
   document.getElementById('f-data-acquisto').value = formatItDate(book?.dataAcquisto);
   document.getElementById('f-prezzo').value = book?.prezzoAcquisto ?? '';
@@ -1004,13 +968,16 @@ async function saveBook(){
     dataFineLettura,
     ubicazione: document.getElementById('f-ubicazione').value.trim(),
     categoria: pickedCategory || null,
-    copertina: formCoverUrl,
   };
+  let bookId;
   if (editingBookId){
+    bookId = editingBookId;
     const idx = books.findIndex(b=>b.id===editingBookId);
-    if (idx>-1) books[idx] = {...books[idx], ...data};
+    if (idx>-1){ data.copertina = books[idx].copertina || null; books[idx] = {...books[idx], ...data}; }
   } else {
-    books.push({id: uid(), ...data});
+    bookId = uid();
+    data.copertina = null;
+    books.push({id: bookId, ...data});
   }
   const boughtWishId = convertingWishId;
   closeBookForm();
@@ -1021,6 +988,7 @@ async function saveBook(){
     wishlist = wishlist.filter(w=>w.id!==boughtWishId);
     await persistWishlist();
   }
+  if (!data.copertina) fetchAndAttachCover(bookId, data.titolo, data.autore);
 }
 async function deleteBook(){
   if (!editingBookId) return;
@@ -1081,7 +1049,6 @@ function esc(s){ return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;',
 function escAttr(s){ return esc(s).replace(/'/g, "\\'"); }
 
 ['f-data-acquisto','f-inizio','f-fine'].forEach(attachDateMask);
-attachAutoCoverSearch();
 
 /* ---------------- Boot ---------------- */
 async function boot(){
