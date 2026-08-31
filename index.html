@@ -1012,6 +1012,20 @@ function pickCategory(c){ pickedCategory = (pickedCategory === c) ? null : c; re
    Fully automatic: no UI, no user action. saveBook() calls
    fetchAndAttachCover() in the background for any book saved without a
    cover yet, trying each provider in turn until one has an image. */
+// Public-data restricted key (Books API only) — safe to ship client-side,
+// this is Google's own supported pattern for browser-embedded API keys.
+const GOOGLE_BOOKS_API_KEY = 'AIzaSyBffU0WeEEcTLZbaO1ryX8B9V6IQDWtuR8';
+async function fetchCoverGoogleBooks(title, author){
+  try{
+    const q = encodeURIComponent(`intitle:${title}` + (author ? ` inauthor:${author}` : ''));
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&key=${GOOGLE_BOOKS_API_KEY}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const links = json.items?.[0]?.volumeInfo?.imageLinks;
+    const thumb = links?.thumbnail || links?.smallThumbnail;
+    return thumb ? thumb.replace(/^http:/, 'https:') : null;
+  }catch(e){ return null; }
+}
 async function fetchCoverOpenLibrary(title, author){
   try{
     const params = new URLSearchParams({ title, limit: '1', fields: 'cover_i' });
@@ -1034,10 +1048,11 @@ async function fetchCoverItunes(title, author){
   }catch(e){ return null; }
 }
 async function findCoverUrl(title, author){
-  // iTunes' CDN has proven far more reliable to hotlink than Open Library's
-  // (Open Library covers were intermittently failing to load), so it goes
-  // first; Open Library is still tried as a fallback for wider coverage.
-  return (await fetchCoverItunes(title, author)) || (await fetchCoverOpenLibrary(title, author));
+  // Google Books (with a real key) has the widest, most reliable catalog;
+  // iTunes and Open Library remain as fallbacks for whatever it misses.
+  return (await fetchCoverGoogleBooks(title, author))
+      || (await fetchCoverItunes(title, author))
+      || (await fetchCoverOpenLibrary(title, author));
 }
 // One-time-per-load background sweep: any book still carrying an Open
 // Library cover URL gets a chance to be upgraded to the more reliable
@@ -1065,6 +1080,22 @@ async function fetchAndAttachCover(bookId, titolo, autore){
 }
 
 /* ---------------- Barcode scanner (ISBN) ---------------- */
+async function lookupByIsbnGoogleBooks(isbn){
+  try{
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&key=${GOOGLE_BOOKS_API_KEY}`);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const vi = json.items?.[0]?.volumeInfo;
+    if (!vi) return null;
+    const thumb = vi.imageLinks?.thumbnail || vi.imageLinks?.smallThumbnail;
+    return {
+      titolo: vi.title || '',
+      autore: vi.authors?.[0] || '',
+      casaEditrice: vi.publisher || '',
+      copertina: thumb ? thumb.replace(/^http:/, 'https:') : null,
+    };
+  }catch(e){ return null; }
+}
 async function lookupByIsbnEditionsApi(isbn){
   try{
     const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
@@ -1124,13 +1155,17 @@ async function lookupByIsbnArchiveOrg(isbn){
     return { titolo: doc.title, autore: creator || '', casaEditrice: '', copertina: null };
   }catch(e){ return null; }
 }
-// Tries, in order: Open Library by the scanned ISBN (two endpoints), then
-// the same two endpoints again with the ISBN-10 equivalent if there is
-// one, then Internet Archive's separate catalog as a last resort — each
-// step is an independent database/index, so a miss on one doesn't mean
-// the book truly isn't findable.
+// Tries, in order: Google Books (widest catalog, real API key — checked
+// first), then Open Library by the scanned ISBN (two endpoints), then the
+// same two endpoints again with the ISBN-10 equivalent if there is one,
+// then Internet Archive's separate catalog as a last resort — each step
+// is an independent database/index, so a miss on one doesn't mean the
+// book truly isn't findable.
 async function lookupByIsbn(isbn){
-  let info = (await lookupByIsbnEditionsApi(isbn)) || (await lookupByIsbnSearchApi(isbn));
+  let info = await lookupByIsbnGoogleBooks(isbn);
+  if (info) return info;
+
+  info = (await lookupByIsbnEditionsApi(isbn)) || (await lookupByIsbnSearchApi(isbn));
   if (info) return info;
 
   const isbn10 = isbn13to10(isbn);
